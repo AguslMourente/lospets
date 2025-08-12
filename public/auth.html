@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="es">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LostPets — Ingresar & Mis mascotas</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <body>
+    <header class="wrap head">
+      <h1>LostPets</h1>
+      <nav>
+        <a href="/">Ver mascotas cerca</a>
+        <a href="#" id="logout">Salir</a>
+      </nav>
+    </header>
+
+    <main class="wrap grid-2">
+      <section class="panel">
+        <h2>Ingresar</h2>
+        <form id="loginForm" class="stack">
+          <label>Email <input id="loginEmail" type="email" required /></label>
+          <label>Password <input id="loginPass" type="password" required /></label>
+          <button>Entrar</button>
+        </form>
+        <p id="loginMsg" class="muted"></p>
+
+        <hr/>
+        <h2>Crear cuenta</h2>
+        <form id="signupForm" class="stack">
+          <label>Nombre completo <input id="sName" required /></label>
+          <label>Email <input id="sEmail" type="email" required /></label>
+          <label>Password <input id="sPass" type="password" required /></label>
+          <label>Teléfono <input id="sPhone" /></label>
+          <label>Ubicación (texto) <input id="sLocation" /></label>
+          <button>Registrarme</button>
+        </form>
+        <p id="signupMsg" class="muted"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Crear mascota (necesita login)</h2>
+        <form id="petForm" class="stack">
+          <label>Nombre <input id="pName" required /></label>
+          <label>Ubicación (texto) <input id="pLocation" /></label>
+          <div class="row">
+            <label>Lat <input id="pLat" type="number" step="any" style="width:140px"/></label>
+            <label>Lng <input id="pLng" type="number" step="any" style="width:140px"/></label>
+            <button type="button" id="geoBtn">Tomar mi ubicación</button>
+          </div>
+          <label>Foto <input id="pImg" type="file" accept="image/*" /></label>
+          <img id="preview" style="max-width:200px; display:none; border-radius:12px;"/>
+          <button>Guardar mascota</button>
+        </form>
+
+        <p id="petMsg" class="muted"></p>
+
+        <h3>Mis mascotas</h3>
+        <div id="myPets" class="grid"></div>
+      </section>
+    </main>
+
+    <script>
+      const tokenKey = "lp_token";
+      const getToken = () => localStorage.getItem(tokenKey);
+      const setToken = (t) => localStorage.setItem(tokenKey, t);
+      const clearToken = () => localStorage.removeItem(tokenKey);
+
+      // ---- Login
+      document.getElementById("loginForm").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const email = document.getElementById("loginEmail").value.trim();
+        const password = document.getElementById("loginPass").value;
+        const r = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const j = await r.json();
+        if (r.ok && j.token) {
+          setToken(j.token);
+          document.getElementById("loginMsg").textContent = "Listo. Ya podés crear mascotas.";
+          loadMyPets();
+        } else {
+          document.getElementById("loginMsg").textContent = "Login inválido.";
+        }
+      };
+
+      // ---- Signup
+      document.getElementById("signupForm").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const body = {
+          fullName: document.getElementById("sName").value.trim(),
+          email: document.getElementById("sEmail").value.trim(),
+          password: document.getElementById("sPass").value,
+          phone: document.getElementById("sPhone").value.trim(),
+          location: document.getElementById("sLocation").value.trim(),
+        };
+        const r = await fetch("/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          document.getElementById("signupMsg").textContent = "Cuenta creada. Ingresá con tu email y contraseña.";
+        } else {
+          const j = await r.json().catch(() => ({}));
+          document.getElementById("signupMsg").textContent =
+            "No se pudo crear la cuenta" + (j?.error ? ` (${j.error})` : "");
+        }
+      };
+
+      // ---- Geolocalización para crear mascota
+      document.getElementById("geoBtn").onclick = () => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            document.getElementById("pLat").value = pos.coords.latitude.toFixed(6);
+            document.getElementById("pLng").value = pos.coords.longitude.toFixed(6);
+          },
+          () => {
+            document.getElementById("petMsg").textContent = "No se pudo obtener ubicación.";
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      };
+
+      // ---- Preview de imagen y dataURI
+      let imageDataURI = null;
+      document.getElementById("pImg").addEventListener("change", (ev) => {
+        const f = ev.target.files?.[0];
+        const prev = document.getElementById("preview");
+        if (!f) {
+          imageDataURI = null;
+          prev.style.display = "none";
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          imageDataURI = reader.result;
+          prev.src = imageDataURI;
+          prev.style.display = "block";
+        };
+        reader.readAsDataURL(f);
+      });
+
+      // ---- Crear mascota
+      document.getElementById("petForm").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const token = getToken();
+        if (!token) {
+          document.getElementById("petMsg").textContent = "Necesitás iniciar sesión.";
+          return;
+        }
+        const body = {
+          name: document.getElementById("pName").value.trim(),
+          location: document.getElementById("pLocation").value.trim(),
+          lat: document.getElementById("pLat").value
+            ? Number(document.getElementById("pLat").value)
+            : undefined,
+          lng: document.getElementById("pLng").value
+            ? Number(document.getElementById("pLng").value)
+            : undefined,
+          imageDataURI: imageDataURI || undefined,
+        };
+        const r = await fetch("/pets", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + token,
+          },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          document.getElementById("petMsg").textContent = "Mascota guardada.";
+          imageDataURI = null;
+          document.getElementById("preview").style.display = "none";
+          document.getElementById("petForm").reset();
+          loadMyPets();
+        } else {
+          const j = await r.json().catch(() => ({}));
+          document.getElementById("petMsg").textContent =
+            "No se pudo guardar" + (j?.error ? ` (${j.error})` : "");
+        }
+      };
+
+      // ---- Mis mascotas (CORREGIDO)
+      async function loadMyPets() {
+        const token = getToken();
+        const cont = document.getElementById("myPets");
+        if (!token) {
+          cont.innerHTML = `<p class="muted">Ingresá para ver tus mascotas.</p>`;
+          return;
+        }
+        const r = await fetch("/my/pets", {
+          headers: { Authorization: "Bearer " + token },
+        });
+        const list = await r.json();
+
+        cont.innerHTML = "";
+        for (const p of list) {
+          const el = document.createElement("article");
+          el.className = "card";
+          el.innerHTML = `
+            <div class="img">
+              ${
+                p.imageUrl
+                  ? `<img src="${p.imageUrl}" alt="${p.name}"/>`
+                  : `<div class="ph">Sin foto</div>`
+              }
+            </div>
+            <div class="info" style="padding:10px">
+              <h4 style="margin:0 0 6px">${p.name}</h4>
+              <p class="muted" style="margin:0 0 6px">${p.location || ""}</p>
+              <span class="muted">Estado: ${p.status}</span>
+            </div>
+          `;
+          cont.appendChild(el);
+        }
+      }
+
+      // ---- Logout
+      document.getElementById("logout").onclick = (e) => {
+        e.preventDefault();
+        clearToken();
+        loadMyPets();
+        document.getElementById("loginMsg").textContent = "Sesión cerrada.";
+      };
+
+      // Si ya tengo token, cargo mis mascotas al entrar
+      if (getToken()) loadMyPets();
+    </script>
+  </body>
+</html>
